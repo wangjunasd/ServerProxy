@@ -6,9 +6,7 @@ $serv = new swoole_server("0.0.0.0", 9509, SWOOLE_PROCESS, SWOOLE_SOCK_TCP);
 $serv->set(array(
     'worker_num' => 4,
     'daemonize' => false,
-    'backlog' => 128,
-    'heartbeat_check_interval' => 60,
-    'heartbeat_idle_time' => 120
+    'backlog' => 128
 ));
 
 $serv->session = new swoole_table(16);
@@ -19,13 +17,40 @@ $serv->session->column('activeTime', swoole_table::TYPE_INT, 4);
 
 $serv->session->create();
 
+
+$workerProcess = new swoole_process(function (swoole_process $process) use($serv)
+{
+    while (true){
+        
+        foreach ($serv->session as $clientfd=>$clientInfo){
+            
+            if ($clientInfo['activeTime']<(time()-10) || false===$serv->exist($clientfd)){
+                
+               $serv->session->del($clientfd);
+                
+            }else{
+                
+                $serv->send($clientfd,makePingMessage());
+            }
+        
+        }
+        
+        sleep(5);
+    }
+    
+});
+
+$serv->addProcess($workerProcess);
+
 $serv->on('workerstart', function ($serv, $id) {});
 
 $serv->on('connect', function ($serv, $fd) {
-    if (count($serv->session)){
+    //get client fd
+    $counter=count($serv->session);
+    
+    if ($counter>0){
         
-        //get client fd
-        $counter=count($serv->session);
+        $fdinfo = $serv->connection_info($fd);
         
         $selected=mt_rand(0, $counter-1);
         
@@ -33,7 +58,7 @@ $serv->on('connect', function ($serv, $fd) {
         
         foreach ($serv->session as $clientfd=>$clientInfo){
         
-            if ($selected===$i){
+            if ($selected===$i && $fdinfo['remote_ip']!=$clientInfo['ip']){
                 $serv->send($clientfd,makeConnectMessage($fd));
         
                 break;
@@ -49,10 +74,10 @@ $serv->on('connect', function ($serv, $fd) {
 $serv->on('receive', function ($serv, $fd, $from_id, $data) {
     
     if (binTohex(substr($data, 0, 4)) === "abacadae") {
-        // Ö¸Áî
+        // æŒ‡ä»¤
         switch (binTohex(substr($data, 4, 1))) {
             case "71":
-                // ×¢²á
+                // æ³¨å†Œ
                 $fdinfo = $serv->connection_info($fd);
                 $serv->session->set($fd, array(
                     'ip' => $fdinfo['remote_ip'],
@@ -61,14 +86,14 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
                 ));
                 break;
             case "72":
-                // ·¢ËÍÏûÏ¢
+                // å‘é€æ¶ˆæ¯
                 $sendFd = binToNum(substr($data, 5, 4));
                 
                 if ($serv->exist($sendFd)) {
                     if ($fd!=$sendFd)
                      $serv->send($sendFd, substr($data, 9));
                 } else {
-                    // ¸æÖª¿Í»§¶Ë¹Ø±ÕÕâ¸öÁ¬½Ó
+                    // å‘ŠçŸ¥å®¢æˆ·ç«¯å…³é—­è¿™ä¸ªè¿žæŽ¥
                     
                     $serv->send($fd, makeCloseMessage($sendFd));
                 }
@@ -78,7 +103,7 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
             case "73":
                 // connect
                 
-                // ·þÎñ¶Ë²»´¦Àí´ËÏûÏ¢
+                // æœåŠ¡ç«¯ä¸å¤„ç†æ­¤æ¶ˆæ¯
                 
                 break;
             
@@ -113,58 +138,75 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
                 }
                 
                 break;
+                
+            case "76":
+                //ping
+                $serv->send($fd,makePongMessage());
+                break;
+                
+            case "77":
+                //pong
+                $serv->session->set($fd,array(
+                    'activeTime'=>time()
+                ));
+                
+                break;
         }
     } else {
-        // ÆÕÍ¨ÇëÇó£¬×ª·¢
+        // æ™®é€šè¯·æ±‚ï¼Œè½¬å‘
         
         //get client fd
         $counter=count($serv->session);
         
-        $selected=mt_rand(0, $counter-1);
-        
-        $i=0;
-        
-        foreach ($serv->session as $clientfd=>$clientInfo){
+        if ($counter>0){
             
-            if ($selected===$i){
-                $serv->send($clientfd,makeSendMessage($fd, $data));
-                
-                break;
-            }
-            $i++;
+            $selected=mt_rand(0, $counter-1);
+            
+            $i=0;
+            
+            foreach ($serv->session as $clientfd=>$clientInfo){
+            
+                if ($selected===$i){
+                    $serv->send($clientfd,makeSendMessage($fd, $data));
+            
+                    break;
+                }
+                $i++;
+            }            
         }
+        
+
     }
 });
 
 $serv->on('close', function ($serv, $fd) {
     
-    if (count($serv->session)){
+    $counter=count($serv->session);
     
-        //get client fd
-        $counter=count($serv->session);
-    
-        $selected=mt_rand(0, $counter-1);
-    
-        $i=0;
-    
-        foreach ($serv->session as $clientfd=>$clientInfo){
-    
-            if ($selected===$i){
-                $serv->send($clientfd,makeConnectMessage($fd));
-    
-                break;
-            }
-            $i++;
+    if ($counter>0){
+        
+        // update session table.
+        if ($serv->session->exist($fd)) {
+            $serv->session->del($fd);
+        }else{
+            
+            $selected=mt_rand(0, $counter-1);
+            
+            $i=0;
+            
+            foreach ($serv->session as $clientfd=>$clientInfo){
+            
+                if ($selected===$i){
+                    $serv->send($clientfd,makeCloseMessage($fd));
+            
+                    break;
+                }
+                $i++;
+            }      
         }
-    
     
     }else{
         //dont do nothing
-    }
-    
-    // update session table.
-    if ($serv->session->exist($fd)) {
-        $serv->session->del($fd);
     }
 });
 

@@ -38,9 +38,24 @@ function makeSendMessage($fd,$data){
     $message.=$data;
     return $message;
 }
+function makeAuthMessage(){
+    $message=pack('H*','abacadae71');
+    $message.="\n";
+    return $message;
+}
 
 function makeBoardcastMessage($data){
     $message=pack('H*','abacadae75');
     $message.=$data;
     return $message;
+}
+function makePingMessage(){
+    $message=pack('H*','abacadae76');
+    $message.="\n";
+    return $message;    
+}
+function makePongMessage(){
+    $message=pack('H*','abacadae77');
+    $message.="\n";
+    return $message;    
 }
