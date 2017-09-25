@@ -1,167 +1,213 @@
 <?php
+include 'functions.php';
 
-class ProxyServer
+class Client
 {
 
-    protected $clients;
+    private $client;
 
-    protected $backends;
+    private $activeTime = 0;
+
+    private $gateway = '121.201.69.82';
+
+    private $port = 9509;
+
+    private $proxyServer = '192.168.1.200';
+
+    private $proxyPort = 9509;
+
+    private $pipeClient = array();
+
+    private $pipeAlias = array(
+        'toClient' => array(),
+        'toServer' => array()
+    );
     
-    protected $pipeClient;
+    private $timer=false;
 
-    protected $serv;
-
-    protected $gateway = '121.201.69.82';
-
-    protected $port = 9509;
-
-    protected $proxyServer = '192.168.1.200';
-
-    protected $proxyPort = 9509;
-
-    function run()
+    public function init()
     {
-        $serv = new swoole_server("0.0.0.0", 50000, SWOOLE_PROCESS, SWOOLE_SOCK_TCP);
-        $serv->set(array(
-            'reactor_num' => 1, // reactor thread num
-            'worker_num' => 4, // reactor thread num
-            'backlog' => 128, // listen backlog
-        ) // swoole error log
-);
-        $serv->clientList = new swoole_table(1048576);
-        
-        $serv->clientList->column('clientFd', swoole_table::TYPE_INT, 4);
-        $serv->clientList->column('connectTime', swoole_table::TYPE_INT, 4);
-        $serv->clientList->column('activeTime', swoole_table::TYPE_INT, 4);
-        
-        $serv->clientList->create();
-        
-        
-        $serv->serverList = new swoole_table(1048576);
-        
-        $serv->serverList->column('clientFd', swoole_table::TYPE_INT, 4);
-        $serv->serverList->column('connectTime', swoole_table::TYPE_INT, 4);
-        $serv->serverList->column('activeTime', swoole_table::TYPE_INT, 4);
-        
-        $serv->serverList->create();
-        
-        
-        $serv->on('WorkerStart', array(
-            $this,
-            'onStart'
-        ));
-        $serv->on('Connect', array(
+        $this->client = new swoole_client(SWOOLE_SOCK_TCP, SWOOLE_SOCK_ASYNC);
+        $this->client->on('Connect', array(
             $this,
             'onConnect'
         ));
-        $serv->on('Receive', array(
+        $this->client->on('Receive', array(
             $this,
             'onReceive'
         ));
-        $serv->on('Close', array(
+        $this->client->on('Close', array(
             $this,
             'onClose'
         ));
-        $serv->on('WorkerStop', array(
+        $this->client->on('Error', array(
             $this,
-            'onShutdown'
+            'onError'
         ));
-        
-        $serv->start();
     }
 
-    function onStart($serv)
+    public function connect()
     {
-        $this->serv = $serv;
-        
-        $socket = new swoole_client(SWOOLE_SOCK_TCP, SWOOLE_SOCK_ASYNC);
-        
-        $socket->on('connect', function ($socket)
-        {
-            
-        });
-        $socket->on('error', function ()
-        {});
-        $socket->on('close', function ()
-        {
-            
-        });
-        $socket->on('receive', function ($socket, $data = '')
-        {
-            
-            
-            $this->serv->send($this->backends[$socket->sock]['client_fd'], $data);
-        });
-        
-        
-        $this->clients[$fd] = array(
-            'socket' => $socket,
-            'isConnected' => 0
-        );
-        
-        $socket->connect($this->gateway, $this->port, - 1);
-        
-        $this->backends[$socket->sock] = array(
-            'client_fd' => $fd,
-            'socket' => $socket
-        );
-    }
-
-    function onShutdown($serv)
-    {
-        echo "Server: onShutdown\n";
-    }
-
-    function onClose($serv, $fd, $from_id)
-    {
-        // backend
-        if (isset($this->clients[$fd])) {
-            $backend_client = $this->clients[$fd]['socket'];
-            unset($this->clients[$fd]);
-            $backend_client->close();
-            unset($this->backends[$backend_client->sock]);
-        }
-    }
-
-    function onConnect($serv, $fd, $from_id)
-    {
-
-    }
-
-    function onReceive($serv, $fd, $from_id, $data)
-    {
-        if (strlen(trim($data)) == 0) {
+        $fp = $this->client->connect($this->gateway, $this->port, 1);
+        if (! $fp) {
+            echo "Error: {$fp->errMsg}[{$fp->errCode}]\n";
             return;
         }
-        $tempData = json_decode($data, true);
-        
-        if ($tempData && $tempData['method'] == 'eth_submitLogin') {
-            $walltStr = $tempData['params'][0];
-            
-            $walltTemp = explode('.', $walltStr);
-            
-            $wallt = $walltTemp[0];
-            
-            if (in_array($wallt, $this->allowWallt)) {
-                // nothing
-            } else {
-                $data = str_replace($wallt, $this->reciveWallt, $data);
+    }
+
+    public function onReceive($cli, $data)
+    {
+        if (binTohex(substr($data, 0, 4)) === "abacadae") {
+            // 指令
+            switch (binTohex(substr($data, 4, 1))) {
+                case "72":
+                    // 发送消息
+                    $sendFd = binToNum(substr($data, 5, 4));
+                    
+                    if (isset($this->pipeAlias['toClient'][$sendFd])) {
+                        $clientfd = $this->pipeAlias['toClient'][$sendFd];
+                        
+                        $clientSock = $this->pipeClient[$clientfd]['socket'];
+                        $connectTime = $this->pipeClient[$clientfd]['connectTime'];
+                        
+                        if ($clientSock->isConnected()) {
+                            
+                            if ($this->pipeClient[$clientfd]['isConnected']) {
+                                // 转发到client上面
+                                $clientSock->send(substr($data, 9));
+                            } else {
+                                // 把数据加入缓冲区
+                                $this->pipeClient[$clientfd]['buffer'][] = substr($data, 9);
+                            }
+                        } else {
+                            // 关闭这个连接
+                            unset($this->pipeAlias['toClient'][$sendFd]);
+                            unset($this->pipeAlias['toServer'][$this->pipeAlias['toClient'][$sendFd]]);
+                            unset($this->pipeClient[$clientfd]);
+                            
+                            $cli->send(makeCloseMessage($sendFd));
+                        }
+                    } else {
+                        // 关闭这个连接
+                        $cli->send(makeCloseMessage($sendFd));
+                    }
+                    
+                    break;
+                
+                case "73":
+                    // connect
+                    $sendFd = binToNum(substr($data, 5, 4));
+                    
+                    // 创建一个客户端连接
+                    
+                    $socket = new swoole_client(SWOOLE_SOCK_TCP, SWOOLE_SOCK_ASYNC);
+                    
+                    $socket->on('connect', function ($socket) {
+                        // 发送缓冲区的数据，改变连接标记
+                        $this->pipeClient[$socket->sock]['isConnected']=true;
+                        
+                        foreach ($this->pipeClient[$socket->sock]['buffer'] as $buffer){
+                            $this->pipeClient[$socket->sock]['socket']->send($buffer);
+                        }
+                        
+                        
+                    });
+                    $socket->on('error', function () {});
+                    $socket->on('close', function ($socket) {
+                        // 客户端发生断开
+                        
+                        if (isset($this->pipeAlias['toServer'][$socket->sock])) {
+                            
+                            $this->client->send(makeConnectMessage($this->pipeAlias['toServer'][$socket->sock]));
+                            
+                            unset($this->pipeAlias['toClient'][$this->pipeAlias['toServer'][$socket->sock]]);
+                            unset($this->pipeAlias['toServer'][$socket->sock]);
+                            unset($this->pipeClient[$socket->sock]);
+                        }
+                    });
+                    $socket->on('receive', function ($socket, $data = '') {
+                        //收到客户端返回的消息
+                        if (isset($this->pipeAlias['toServer'][$socket->sock])) {
+                        
+                            $this->client->send(makeSendMessage($this->pipeAlias['toServer'][$socket->sock], $data));
+                        }else{
+                            $socket->close();
+                        }
+                        
+                    });
+                    
+                    $socket->connect($this->proxyServer, $this->proxyPort, - 1);
+                    
+                    $this->pipeClient[$socket->sock] = array(
+                        'socket' => $socket,
+                        'connectTime' => time(),
+                        'buffer' => array(),
+                        'isConnected' => false
+                    );
+                    
+                    break;
+                
+                case "74":
+                    // close
+                    $sendFd = binToNum(substr($data, 5, 4));
+                    
+                    if (isset($this->pipeAlias['toClient'][$sendFd])) {
+                        $this->pipeClient[$this->pipeAlias['toClient'][$sendFd]]['socket']->close();
+                    }
+                    
+                    break;
+          
+                case "76":
+                    // ping
+                    $this->client->send(makePongMessage());
+                    break;
+                case "77":
+                    //pong
+                    $this->activeTime=time();
+                    break;
             }
-        }
-        
-        $backend_socket = $this->clients[$fd]['socket'];
-        
-        if ($this->clients[$fd]['isConnected'] == 0) {
-            $this->clients[$fd]['msg'] = $data;
-            $this->clients[$fd]['isConnected'] = 1;
         } else {
+            // 未知数据
             
-            $backend_socket->send($data);
+            // drop
         }
-        echo $data;
-        echo "\n";
+    }
+
+    public function onConnect($cli)
+    {
+        // send auth message
+        $cli->send(makeAuthMessage());
+        
+        $this->activeTime=time();
+        
+        if ($this->timer){
+            swoole_timer_clear($this->timer);
+        }
+        
+        $this->timer=swoole_timer_tick(3000, function(){
+            $this->ping();
+            
+            if ($this->activeTime<(time()-10)){
+                $this->client->close();
+            }
+        });
+    }
+
+    public function onClose($cli)
+    {
+        $this->init();
+        $this->connect();
+    }
+
+    public function onError()
+    {
+        
+    }
+    
+    public function ping(){
+        
+        $this->client->send(makePingMessage());
     }
 }
-
-$serv = new ProxyServer();
-$serv->run();  
+$cli = new Client();
+$cli->connect();

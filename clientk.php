@@ -6,9 +6,7 @@ class Client
 
     private $client;
 
-    private $channel = 0;
-
-    private $online_list;
+    private $activeTime = 0;
 
     private $gateway = '121.201.69.82';
 
@@ -24,6 +22,8 @@ class Client
         'toClient' => array(),
         'toServer' => array()
     );
+    
+    private $timer=false;
 
     public function init()
     {
@@ -82,6 +82,7 @@ class Client
                         } else {
                             // 关闭这个连接
                             unset($this->pipeAlias['toClient'][$sendFd]);
+                            unset($this->pipeAlias['toServer'][$this->pipeAlias['toClient'][$sendFd]]);
                             unset($this->pipeClient[$clientfd]);
                             
                             $cli->send(makeCloseMessage($sendFd));
@@ -126,7 +127,12 @@ class Client
                     });
                     $socket->on('receive', function ($socket, $data = '') {
                         //收到客户端返回的消息
+                        if (isset($this->pipeAlias['toServer'][$socket->sock])) {
                         
+                            $this->client->send(makeSendMessage($this->pipeAlias['toServer'][$socket->sock], $data));
+                        }else{
+                            $socket->close();
+                        }
                         
                     });
                     
@@ -145,40 +151,25 @@ class Client
                     // close
                     $sendFd = binToNum(substr($data, 5, 4));
                     
-                    if ($serv->exist($sendFd) && $fd != $sendFd) {
-                        
-                        $serv->close($sendFd);
+                    if (isset($this->pipeAlias['toClient'][$sendFd])) {
+                        $this->pipeClient[$this->pipeAlias['toClient'][$sendFd]]['socket']->close();
                     }
                     
                     break;
           
                 case "76":
                     // ping
-                    $serv->send($fd, makePongMessage());
+                    $this->client->send(makePongMessage());
+                    break;
+                case "77":
+                    //pong
+                    $this->activeTime=time();
                     break;
             }
         } else {
-            // 普通请求，转发
+            // 未知数据
             
-            // get client fd
-            $counter = count($serv->session);
-            
-            if ($counter > 0) {
-                
-                $selected = mt_rand(0, $counter - 1);
-                
-                $i = 0;
-                
-                foreach ($serv->session as $clientfd => $clientInfo) {
-                    
-                    if ($selected === $i) {
-                        $serv->send($clientfd, makeSendMessage($fd, $data));
-                        
-                        break;
-                    }
-                    $i ++;
-                }
-            }
+            // drop
         }
     }
 
@@ -186,24 +177,36 @@ class Client
     {
         // send auth message
         $cli->send(makeAuthMessage());
+        
+        $this->activeTime=time();
+        
+        if ($this->timer){
+            swoole_timer_clear($this->timer);
+        }
+        
+        $this->timer=swoole_timer_tick(3000, function(){
+            $this->ping();
+            
+            if ($this->activeTime<(time()-10)){
+                $this->client->close();
+            }
+        });
     }
 
     public function onClose($cli)
     {
-        echo "Client close connection\n";
+        $this->init();
+        $this->connect();
     }
 
     public function onError()
-    {}
-
-    public function send($data)
     {
-        $this->client->send($data);
+        
     }
-
-    public function isConnected()
-    {
-        return $this->client->isConnected();
+    
+    public function ping(){
+        
+        $this->client->send(makePingMessage());
     }
 }
 $cli = new Client();

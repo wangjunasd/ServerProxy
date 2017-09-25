@@ -6,7 +6,9 @@ $serv = new swoole_server("0.0.0.0", 9509, SWOOLE_PROCESS, SWOOLE_SOCK_TCP);
 $serv->set(array(
     'worker_num' => 4,
     'daemonize' => false,
-    'backlog' => 128
+    'backlog' => 128,
+    'heartbeat_check_interval' => 60,
+    'heartbeat_idle_time' => 600
 ));
 
 $serv->session = new swoole_table(16);
