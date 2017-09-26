@@ -8,13 +8,13 @@ class Client
 
     private $activeTime = 0;
 
-    private $gateway = '121.201.69.82';
+    private $gateway = '120.55.38.157';
 
     private $port = 9509;
 
-    private $proxyServer = '192.168.1.200';
+    private $proxyServer = '127.0.0.1';
 
-    private $proxyPort = 9509;
+    private $proxyPort = 80;
 
     private $pipeClient = array();
 
@@ -62,7 +62,14 @@ class Client
             switch (binTohex(substr($data, 4, 1))) {
                 case "72":
                     // 发送消息
+                    echo "recv msg.\r\n";
+                    
                     $sendFd = binToNum(substr($data, 5, 4));
+                    
+                    print_r($this->pipeAlias);
+                    
+                    print_r(substr($data, 9));
+                    echo "\r\n";
                     
                     if (isset($this->pipeAlias['toClient'][$sendFd])) {
                         $clientfd = $this->pipeAlias['toClient'][$sendFd];
@@ -79,6 +86,10 @@ class Client
                                 // 把数据加入缓冲区
                                 $this->pipeClient[$clientfd]['buffer'][] = substr($data, 9);
                             }
+                            
+                            print_r(substr($data, 9));
+                            echo "\r\n";
+                            
                         } else {
                             // 关闭这个连接
                             unset($this->pipeAlias['toClient'][$sendFd]);
@@ -96,6 +107,7 @@ class Client
                 
                 case "73":
                     // connect
+                    echo "recv connect.\r\n";
                     $sendFd = binToNum(substr($data, 5, 4));
                     
                     // 创建一个客户端连接
@@ -103,6 +115,8 @@ class Client
                     $socket = new swoole_client(SWOOLE_SOCK_TCP, SWOOLE_SOCK_ASYNC);
                     
                     $socket->on('connect', function ($socket) {
+                        
+                        echo "new client.\r\n";
                         // 发送缓冲区的数据，改变连接标记
                         $this->pipeClient[$socket->sock]['isConnected']=true;
                         
@@ -110,6 +124,7 @@ class Client
                             $this->pipeClient[$socket->sock]['socket']->send($buffer);
                         }
                         
+                        $this->pipeClient[$socket->sock]['buffer']=array();
                         
                     });
                     $socket->on('error', function () {});
@@ -126,10 +141,23 @@ class Client
                         }
                     });
                     $socket->on('receive', function ($socket, $data = '') {
+                        echo "recv msg from client\r\n";
                         //收到客户端返回的消息
                         if (isset($this->pipeAlias['toServer'][$socket->sock])) {
-                        
-                            $this->client->send(makeSendMessage($this->pipeAlias['toServer'][$socket->sock], $data));
+                            echo "send msg to server\r\n";
+                            
+                            $datalen=strlen($data);
+                            $k=0;
+                            while ($datalen>0){
+                                
+                                $this->client->send(makeSendMessage($this->pipeAlias['toServer'][$socket->sock], substr($data, $k*200,200)."\n"));
+                                
+                                $datalen-=200;
+                                
+                                $k++;
+                            }
+                            
+                            
                         }else{
                             $socket->close();
                         }
@@ -137,6 +165,9 @@ class Client
                     });
                     
                     $socket->connect($this->proxyServer, $this->proxyPort, - 1);
+                    
+                    $this->pipeAlias['toClient'][$sendFd]=$socket->sock;
+                    $this->pipeAlias['toServer'][$socket->sock]=$sendFd;
                     
                     $this->pipeClient[$socket->sock] = array(
                         'socket' => $socket,
@@ -149,6 +180,7 @@ class Client
                 
                 case "74":
                     // close
+                    echo "recv close.\r\n";
                     $sendFd = binToNum(substr($data, 5, 4));
                     
                     if (isset($this->pipeAlias['toClient'][$sendFd])) {
@@ -159,22 +191,26 @@ class Client
           
                 case "76":
                     // ping
+                    echo "recv ping.\r\n";
                     $this->client->send(makePongMessage());
                     break;
                 case "77":
                     //pong
+                    echo "recv pong.\r\n";
                     $this->activeTime=time();
                     break;
             }
         } else {
             // 未知数据
-            
+            print_r($data);
+            echo "\r\n";
             // drop
         }
     }
 
     public function onConnect($cli)
     {
+        echo "connect server success.\r\n";
         // send auth message
         $cli->send(makeAuthMessage());
         
@@ -195,6 +231,7 @@ class Client
 
     public function onClose($cli)
     {
+        echo "server close.\r\n";
         $this->init();
         $this->connect();
     }
@@ -205,9 +242,11 @@ class Client
     }
     
     public function ping(){
+        echo "send ping.\r\n";
         
         $this->client->send(makePingMessage());
     }
 }
 $cli = new Client();
+$cli->init();
 $cli->connect();

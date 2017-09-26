@@ -89,6 +89,8 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
                 break;
             case "72":
                 // 发送消息
+                
+                echo "rev msg\r\n";
                 $sendFd = binToNum(substr($data, 5, 4));
                 
                 if ($serv->exist($sendFd)) {
@@ -99,6 +101,8 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
                     
                     $serv->send($fd, makeCloseMessage($sendFd));
                 }
+                
+                print_r(substr($data, 9));
                 
                 break;
             
