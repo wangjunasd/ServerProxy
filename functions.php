@@ -35,6 +35,7 @@ function makeConnectMessage($fd){
 function makeSendMessage($fd,$data){
     $message=pack('H*','abacadae72');
     $message.=pack('N',$fd);
+    $message.=pack('N',strlen($data));
     $message.=$data;
     return $message;
 }

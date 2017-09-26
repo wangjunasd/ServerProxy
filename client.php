@@ -66,9 +66,13 @@ class Client
                     
                     $sendFd = binToNum(substr($data, 5, 4));
                     
+                    $packLen = binToNum(substr($data, 9,4));
+                    
+                    $dataLen = (strlen($data)-13);
+                    
                     print_r($this->pipeAlias);
                     
-                    print_r(substr($data, 9));
+                    print_r(substr($data, 13));
                     echo "\r\n";
                     
                     if (isset($this->pipeAlias['toClient'][$sendFd])) {
@@ -81,14 +85,11 @@ class Client
                             
                             if ($this->pipeClient[$clientfd]['isConnected']) {
                                 // 转发到client上面
-                                $clientSock->send(substr($data, 9));
+                                $clientSock->send(substr($data, 13));
                             } else {
                                 // 把数据加入缓冲区
-                                $this->pipeClient[$clientfd]['buffer'][] = substr($data, 9);
+                                $this->pipeClient[$clientfd]['buffer'][] = substr($data, 13);
                             }
-                            
-                            print_r(substr($data, 9));
-                            echo "\r\n";
                             
                         } else {
                             // 关闭这个连接
@@ -146,18 +147,8 @@ class Client
                         if (isset($this->pipeAlias['toServer'][$socket->sock])) {
                             echo "send msg to server\r\n";
                             
-                            $datalen=strlen($data);
-                            $k=0;
-                            while ($datalen>0){
-                                
-                                $this->client->send(makeSendMessage($this->pipeAlias['toServer'][$socket->sock], substr($data, $k*200,200)."\n"));
-                                
-                                $datalen-=200;
-                                
-                                $k++;
-                            }
-                            
-                            
+                            $this->client->send(makeSendMessage($this->pipeAlias['toServer'][$socket->sock], $data));
+
                         }else{
                             $socket->close();
                         }

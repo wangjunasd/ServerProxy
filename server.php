@@ -20,6 +20,8 @@ $serv->session->column('activeTime', swoole_table::TYPE_INT, 4);
 $serv->session->create();
 
 
+
+
 $workerProcess = new swoole_process(function (swoole_process $process) use($serv)
 {
     while (true){
@@ -44,7 +46,11 @@ $workerProcess = new swoole_process(function (swoole_process $process) use($serv
 
 $serv->addProcess($workerProcess);
 
-$serv->on('workerstart', function ($serv, $id) {});
+$serv->on('workerstart', function ($serv, $id) {
+    $serv->lastFd=0;
+    $serv->unsendLen=0;
+    $serv->leftData='';
+});
 
 $serv->on('connect', function ($serv, $fd) {
     //get client fd
@@ -75,7 +81,46 @@ $serv->on('connect', function ($serv, $fd) {
 });
 $serv->on('receive', function ($serv, $fd, $from_id, $data) {
     
+    if ($serv->lastFd>0 && $serv->unsendLen>0){
+        //未处理数据
+        $dataLen=strlen($data);
+        
+        if ($dataLen>$serv->unsendLen){
+            //如果接收的数据长度大于等于未发送的数据
+            if ($serv->exist($serv->lastFd)) 
+                $serv->send($serv->lastFd, substr($data, 0,$serv->unsendLen));
+            
+            $serv->lastFd=0;
+            
+            $serv->unsendLen=0;
+            
+            $data=substr($data, $serv->unsendLen);
+            
+        }else{
+            $serv->unsendLen-=$dataLen;
+            if ($serv->exist($serv->lastFd))
+                $serv->send($serv->lastFd, $data);
+            
+            return;
+        }
+        
+        
+    }
+    
+    //处理遗留数据
+    
+    if (strlen($serv->leftData)>0){
+        
+        $data=$serv->leftData.$data;
+        
+        $serv->leftData='';
+    }
+    
+    
+    
     if (binTohex(substr($data, 0, 4)) === "abacadae") {
+        
+        
         // 指令
         switch (binTohex(substr($data, 4, 1))) {
             case "71":
@@ -90,12 +135,27 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
             case "72":
                 // 发送消息
                 
-                echo "rev msg\r\n";
+                echo "rev msg:(".strlen($data).")\r\n";
                 $sendFd = binToNum(substr($data, 5, 4));
+                
+                $packLen = binToNum(substr($data, 9,4));
+                
+                $dataLen = (strlen($data)-13);
+                
+                if ($dataLen<=$packLen){
+                    $sendData=substr($data, 13);
+                    $serv->lastFd=$sendFd;
+                    $serv->unsendLen=($packLen-$dataLen);
+                    
+                }else{
+                    $sendData=substr($data, 13,$packLen);
+                    $serv->leftData=substr($data, 13+$packLen);
+                    $serv->lastFd=$serv->unsendLen=0;
+                }
                 
                 if ($serv->exist($sendFd)) {
                     if ($fd!=$sendFd)
-                     $serv->send($sendFd, substr($data, 9));
+                     $serv->send($sendFd, $sendData);
                 } else {
                     // 告知客户端关闭这个连接
                     
