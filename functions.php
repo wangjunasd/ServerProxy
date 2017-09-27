@@ -21,6 +21,7 @@ function binToNum($bin){
 function makeCloseMessage($fd){
     $message=pack('H*','abacadae74');
     $message.=pack('N',$fd);
+    $message.=pack('N',1);
     $message.="\n";
     return $message;
 }
@@ -28,6 +29,7 @@ function makeCloseMessage($fd){
 function makeConnectMessage($fd){
     $message=pack('H*','abacadae73');
     $message.=pack('N',$fd);
+    $message.=pack('N',1);
     $message.="\n";
     return $message;
 }
@@ -41,22 +43,23 @@ function makeSendMessage($fd,$data){
 }
 function makeAuthMessage(){
     $message=pack('H*','abacadae71');
+    $message.=pack('N',0);
+    $message.=pack('N',1);
     $message.="\n";
     return $message;
 }
 
-function makeBoardcastMessage($data){
-    $message=pack('H*','abacadae75');
-    $message.=$data;
-    return $message;
-}
 function makePingMessage(){
     $message=pack('H*','abacadae76');
+    $message.=pack('N',0);
+    $message.=pack('N',1);
     $message.="\n";
     return $message;    
 }
 function makePongMessage(){
     $message=pack('H*','abacadae77');
+    $message.=pack('N',0);
+    $message.=pack('N',1);
     $message.="\n";
     return $message;    
 }

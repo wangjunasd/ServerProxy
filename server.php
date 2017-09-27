@@ -19,110 +19,124 @@ $serv->session->column('activeTime', swoole_table::TYPE_INT, 4);
 
 $serv->session->create();
 
-
-
-
-$workerProcess = new swoole_process(function (swoole_process $process) use($serv)
-{
-    while (true){
+$workerProcess = new swoole_process(function (swoole_process $process) use($serv) {
+    while (true) {
         
-        foreach ($serv->session as $clientfd=>$clientInfo){
+        foreach ($serv->session as $clientfd => $clientInfo) {
             
-            if ($clientInfo['activeTime']<(time()-10) || false===$serv->exist($clientfd)){
+            if ($clientInfo['activeTime'] < (time() - 10) || false === $serv->exist($clientfd)) {
                 
-               $serv->session->del($clientfd);
+                $serv->session->del($clientfd);
+            } else {
                 
-            }else{
-                
-                $serv->send($clientfd,makePingMessage());
+                $serv->send($clientfd, makePingMessage());
             }
-        
         }
         
         sleep(5);
     }
-    
 });
 
 $serv->addProcess($workerProcess);
 
 $serv->on('workerstart', function ($serv, $id) {
-    $serv->lastFd=0;
-    $serv->unsendLen=0;
-    $serv->leftData='';
+    $serv->lastFd = array();
+    $serv->unsendLen = array();
+    $serv->leftData = array();
 });
 
 $serv->on('connect', function ($serv, $fd) {
-    //get client fd
-    $counter=count($serv->session);
+    // get client fd
+    $counter = count($serv->session);
     
-    if ($counter>0){
+    if ($counter > 0) {
         
         $fdinfo = $serv->connection_info($fd);
         
-        $selected=mt_rand(0, $counter-1);
+        $selected = mt_rand(0, $counter - 1);
         
-        $i=0;
+        $i = 0;
         
-        foreach ($serv->session as $clientfd=>$clientInfo){
-        
-            if ($selected===$i && $fdinfo['remote_ip']!=$clientInfo['ip']){
-                $serv->send($clientfd,makeConnectMessage($fd));
-        
+        foreach ($serv->session as $clientfd => $clientInfo) {
+            
+            if ($selected === $i && $fdinfo['remote_ip'] != $clientInfo['ip']) {
+                $serv->send($clientfd, makeConnectMessage($fd));
+                
                 break;
             }
-            $i++;
+            $i ++;
         }
-        
-        
-    }else{
-        //dont do nothing
+    } else {
+        // dont do nothing
     }
 });
 $serv->on('receive', function ($serv, $fd, $from_id, $data) {
     
-    if ($serv->lastFd>0 && $serv->unsendLen>0){
-        //未处理数据
-        $dataLen=strlen($data);
+    if (isset($serv->lastFd[$fd]) && isset($serv->lastFd[$fd]) && $serv->lastFd[$fd] > 0 && $serv->unsendLen[$fd] > 0) {
+        // 未处理数据
+        $dataLen = strlen($data);
         
-        if ($dataLen>$serv->unsendLen){
-            //如果接收的数据长度大于等于未发送的数据
-            if ($serv->exist($serv->lastFd)) 
-                $serv->send($serv->lastFd, substr($data, 0,$serv->unsendLen));
+        echo "recv unsend strlen:".$dataLen."\r\n";
+        
+        if ($dataLen > $serv->unsendLen[$fd]) {
+            // 如果接收的数据长度大于等于未发送的数据
+            if ($serv->exist($serv->lastFd[$fd]))
+                $serv->send($serv->lastFd[$fd], substr($data, 0, $serv->unsendLen[$fd]));
             
-            $serv->lastFd=0;
             
-            $serv->unsendLen=0;
+            $data = substr($data, $serv->unsendLen[$fd]);
             
-            $data=substr($data, $serv->unsendLen);
+            $serv->lastFd[$fd] = 0;
             
-        }else{
-            $serv->unsendLen-=$dataLen;
-            if ($serv->exist($serv->lastFd))
-                $serv->send($serv->lastFd, $data);
+            $serv->unsendLen[$fd] = 0;
+            
+            
+        } else {
+            $serv->unsendLen[$fd] -= $dataLen;
+            if ($serv->exist($serv->lastFd[$fd]))
+                $serv->send($serv->lastFd[$fd], $data);
             
             return;
         }
-        
-        
     }
     
-    //处理遗留数据
+    // 处理遗留数据
     
-    if (strlen($serv->leftData)>0){
+    if (isset($serv->leftData[$fd]) && strlen($serv->leftData[$fd]) > 0) {
         
-        $data=$serv->leftData.$data;
+        $data = $serv->leftData[$fd] . $data;
         
-        $serv->leftData='';
+        $serv->leftData[$fd] = '';
     }
     
-    
-    
-    if (binTohex(substr($data, 0, 4)) === "abacadae") {
+    if (strlen($data) > 12 && binTohex(substr($data, 0, 4)) === "abacadae") {
         
+        $method = binTohex(substr($data, 4, 1));
+        
+        $sendFd = binToNum(substr($data, 5, 4));
+        
+        $packLen = binToNum(substr($data, 9, 4));
+        
+        $dataLen = (strlen($data) - 13);
+        
+        if ($dataLen <= $packLen) {
+            $sendData = substr($data, 13);
+            $serv->lastFd[$fd] = $sendFd;
+            $serv->unsendLen[$fd] = ($packLen - $dataLen);
+        } else {
+            $sendData = substr($data, 13, $packLen);
+            $serv->leftData[$fd] = substr($data, 13 + $packLen);
+            $serv->lastFd[$fd] = $serv->unsendLen[$fd] = 0;
+        }
+        
+        echo "recv strlen:".strlen($sendData)."\r\n";
+        
+        echo "leftdata strlen:".strlen($serv->leftData[$fd])."\r\n";
+        
+        echo "unsend strlen:".$serv->unsendLen[$fd]."\r\n";
         
         // 指令
-        switch (binTohex(substr($data, 4, 1))) {
+        switch ($method) {
             case "71":
                 // 注册
                 $fdinfo = $serv->connection_info($fd);
@@ -131,38 +145,22 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
                     'connectTime' => time(),
                     'activeTime' => time()
                 ));
+                
+                $serv->lastFd[$fd] = 0;
+                $serv->unsendLen[$fd] = 0;
+                $serv->leftData[$fd] = '';
                 break;
             case "72":
                 // 发送消息
-                
-                echo "rev msg:(".strlen($data).")\r\n";
-                $sendFd = binToNum(substr($data, 5, 4));
-                
-                $packLen = binToNum(substr($data, 9,4));
-                
-                $dataLen = (strlen($data)-13);
-                
-                if ($dataLen<=$packLen){
-                    $sendData=substr($data, 13);
-                    $serv->lastFd=$sendFd;
-                    $serv->unsendLen=($packLen-$dataLen);
-                    
-                }else{
-                    $sendData=substr($data, 13,$packLen);
-                    $serv->leftData=substr($data, 13+$packLen);
-                    $serv->lastFd=$serv->unsendLen=0;
-                }
-                
+             
                 if ($serv->exist($sendFd)) {
-                    if ($fd!=$sendFd)
-                     $serv->send($sendFd, $sendData);
+                    if ($fd != $sendFd)
+                        $serv->send($sendFd, $sendData);
                 } else {
                     // 告知客户端关闭这个连接
                     
                     $serv->send($fd, makeCloseMessage($sendFd));
                 }
-                
-                print_r(substr($data, 9));
                 
                 break;
             
@@ -175,45 +173,23 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
             
             case "74":
                 // close
-                $sendFd = binToNum(substr($data, 5, 4));
                 
-                if ($serv->exist($sendFd) && $fd!=$sendFd) {
+                if ($serv->exist($sendFd) && $fd != $sendFd) {
                     
                     $serv->close($sendFd);
                 }
                 
                 break;
             
-            case "75":
-                // boardcast
-                
-                $message = substr($data, 5);
-                
-                $start_fd = 0;
-                while (true) {
-                    $conn_list = $serv->connection_list($start_fd, 10);
-                    if ($conn_list === false or count($conn_list) === 0) {
-                        break;
-                    }
-                    $start_fd = end($conn_list);
-                    
-                    foreach ($conn_list as $curFd) {
-                        if ($fd != $curFd)
-                            $serv->send($curFd, $message);
-                    }
-                }
-                
-                break;
-                
             case "76":
-                //ping
-                $serv->send($fd,makePongMessage());
+                // ping
+                $serv->send($fd, makePongMessage());
                 break;
-                
+            
             case "77":
-                //pong
-                $serv->session->set($fd,array(
-                    'activeTime'=>time()
+                // pong
+                $serv->session->set($fd, array(
+                    'activeTime' => time()
                 ));
                 
                 break;
@@ -221,58 +197,55 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
     } else {
         // 普通请求，转发
         
-        //get client fd
-        $counter=count($serv->session);
+        // get client fd
+        $counter = count($serv->session);
         
-        if ($counter>0){
+        if ($counter > 0) {
             
-            $selected=mt_rand(0, $counter-1);
+            $selected = mt_rand(0, $counter - 1);
             
-            $i=0;
+            $i = 0;
             
-            foreach ($serv->session as $clientfd=>$clientInfo){
-            
-                if ($selected===$i){
-                    $serv->send($clientfd,makeSendMessage($fd, $data));
-            
+            foreach ($serv->session as $clientfd => $clientInfo) {
+                
+                if ($selected === $i) {
+                    $serv->send($clientfd, makeSendMessage($fd, $data));
+                    
                     break;
                 }
-                $i++;
-            }            
+                $i ++;
+            }
         }
-        
-
     }
 });
 
 $serv->on('close', function ($serv, $fd) {
     
-    $counter=count($serv->session);
+    $counter = count($serv->session);
     
-    if ($counter>0){
+    if ($counter > 0) {
         
         // update session table.
         if ($serv->session->exist($fd)) {
             $serv->session->del($fd);
-        }else{
+        } else {
             
-            $selected=mt_rand(0, $counter-1);
+            $selected = mt_rand(0, $counter - 1);
             
-            $i=0;
+            $i = 0;
             
-            foreach ($serv->session as $clientfd=>$clientInfo){
-            
-                if ($selected===$i){
-                    $serv->send($clientfd,makeCloseMessage($fd));
-            
+            foreach ($serv->session as $clientfd => $clientInfo) {
+                
+                if ($selected === $i) {
+                    $serv->send($clientfd, makeCloseMessage($fd));
+                    
                     break;
                 }
-                $i++;
-            }      
+                $i ++;
+            }
         }
-    
-    }else{
-        //dont do nothing
+    } else {
+        // dont do nothing
     }
 });
 
