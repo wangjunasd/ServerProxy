@@ -63,3 +63,8 @@ function makePongMessage(){
     $message.="\n";
     return $message;    
 }
+
+function parseMessage(){
+    
+    
+}
