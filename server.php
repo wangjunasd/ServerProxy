@@ -76,10 +76,8 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
         // 未处理数据
         $dataLen = strlen($data);
         
-        echo "recv unsend strlen:".$dataLen."\r\n";
-        
         if ($dataLen > $serv->unsendLen[$fd]) {
-            // 如果接收的数据长度大于等于未发送的数据
+            // 如果接收的数据长度大于未发送的数据
             if ($serv->exist($serv->lastFd[$fd]))
                 $serv->send($serv->lastFd[$fd], substr($data, 0, $serv->unsendLen[$fd]));
             
@@ -129,11 +127,6 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
             $serv->lastFd[$fd] = $serv->unsendLen[$fd] = 0;
         }
         
-        echo "recv strlen:".strlen($sendData)."\r\n";
-        
-        echo "leftdata strlen:".strlen($serv->leftData[$fd])."\r\n";
-        
-        echo "unsend strlen:".$serv->unsendLen[$fd]."\r\n";
         
         // 指令
         switch ($method) {

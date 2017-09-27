@@ -4,7 +4,9 @@ include 'functions.php';
 class Client
 {
 
-    private $client;
+    private $client = array();
+    
+    private $clientNum = 10;
 
     private $activeTime = 0;
 
@@ -31,36 +33,40 @@ class Client
 
     public function init()
     {
-        $this->client = new swoole_client(SWOOLE_SOCK_TCP, SWOOLE_SOCK_ASYNC);
-        $this->client->on('Connect', array(
-            $this,
-            'onConnect'
-        ));
-        $this->client->on('Receive', array(
-            $this,
-            'onReceive'
-        ));
-        $this->client->on('Close', array(
-            $this,
-            'onClose'
-        ));
-        $this->client->on('Error', array(
-            $this,
-            'onError'
-        ));
-        
-        $this->lastFd=0;
-        $this->unsendLen=0;
-        $this->leftData='';
+        for ($i=0;$i<$this->clientNum;$i++){
+            $this->client[$i] = new swoole_client(SWOOLE_SOCK_TCP, SWOOLE_SOCK_ASYNC);
+            $this->client[$i]->on('Connect', array(
+                $this,
+                'onConnect'
+            ));
+            $this->client[$i]->on('Receive', array(
+                $this,
+                'onReceive'
+            ));
+            $this->client[$i]->on('Close', array(
+                $this,
+                'onClose'
+            ));
+            $this->client[$i]->on('Error', array(
+                $this,
+                'onError'
+            ));
+            
+            $this->lastFd[$i]=0;
+            $this->unsendLen[$i]=0;
+            $this->leftData[$i]='';            
+            
+        }
+
     }
 
     public function connect()
     {
-        $fp = $this->client->connect($this->gateway, $this->port, 1);
-        if (! $fp) {
-            echo "Error: {$fp->errMsg}[{$fp->errCode}]\n";
-            return;
+        
+        for ($i=0;$i<$this->clientNum;$i++){
+            $this->client[$i]->connect($this->gateway, $this->port, 1);
         }
+        
     }
 
     public function onReceive($cli, $data)
