@@ -8,7 +8,7 @@ class Client
 
     private $activeTime = 0;
 
-    private $gateway = '120.55.38.157';
+    private $gateway = '110.119.120.114';
 
     private $port = 9509;
 
