@@ -265,7 +265,7 @@ $serv->on('close', function ($serv, $fd) {
             }
         }
     } else {
-        // dont do nothing
+        //do nothing
     }
 });
 
