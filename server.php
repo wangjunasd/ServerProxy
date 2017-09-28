@@ -72,6 +72,7 @@ $serv->on('connect', function ($serv, $fd) {
 });
 $serv->on('receive', function ($serv, $fd, $from_id, $data) {
     
+    
     if (isset($serv->lastFd[$fd]) && isset($serv->lastFd[$fd]) && $serv->lastFd[$fd] > 0 && $serv->unsendLen[$fd] > 0) {
         // 未处理数据
         $dataLen = strlen($data);
@@ -107,109 +108,135 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
         $serv->leftData[$fd] = '';
     }
     
-    if (strlen($data) > 12 && binTohex(substr($data, 0, 4)) === "abacadae") {
+    $isCommand=false;
+    
+    
+    for ($j=0;$j<10;$j++){
         
-        $method = binTohex(substr($data, 4, 1));
-        
-        $sendFd = binToNum(substr($data, 5, 4));
-        
-        $packLen = binToNum(substr($data, 9, 4));
-        
-        $dataLen = (strlen($data) - 13);
-        
-        if ($dataLen <= $packLen) {
-            $sendData = substr($data, 13);
-            $serv->lastFd[$fd] = $sendFd;
-            $serv->unsendLen[$fd] = ($packLen - $dataLen);
-        } else {
-            $sendData = substr($data, 13, $packLen);
-            $serv->leftData[$fd] = substr($data, 13 + $packLen);
-            $serv->lastFd[$fd] = $serv->unsendLen[$fd] = 0;
-        }
-        
-        
-        // 指令
-        switch ($method) {
-            case "71":
-                // 注册
-                $fdinfo = $serv->connection_info($fd);
-                $serv->session->set($fd, array(
-                    'ip' => $fdinfo['remote_ip'],
-                    'connectTime' => time(),
-                    'activeTime' => time()
-                ));
-                
-                $serv->lastFd[$fd] = 0;
-                $serv->unsendLen[$fd] = 0;
-                $serv->leftData[$fd] = '';
-                break;
-            case "72":
-                // 发送消息
-             
-                if ($serv->exist($sendFd)) {
-                    if ($fd != $sendFd)
-                        $serv->send($sendFd, $sendData);
-                } else {
-                    // 告知客户端关闭这个连接
-                    
-                    $serv->send($fd, makeCloseMessage($sendFd));
-                }
-                
-                break;
+        if (strlen($data) > 12 && binTohex(substr($data, 0, 4)) === "abacadae") {
             
-            case "73":
-                // connect
-                
-                // 服务端不处理此消息
-                
-                break;
-            
-            case "74":
-                // close
-                
-                if ($serv->exist($sendFd) && $fd != $sendFd) {
-                    
-                    $serv->close($sendFd);
-                }
-                
-                break;
-            
-            case "76":
-                // ping
-                $serv->send($fd, makePongMessage());
-                break;
-            
-            case "77":
-                // pong
-                $serv->session->set($fd, array(
-                    'activeTime' => time()
-                ));
-                
-                break;
-        }
-    } else {
-        // 普通请求，转发
+            $isCommand=true;
         
-        // get client fd
-        $counter = count($serv->session);
+            $method = binTohex(substr($data, 4, 1));
         
-        if ($counter > 0) {
-            
-            $selected = mt_rand(0, $counter - 1);
-            
-            $i = 0;
-            
-            foreach ($serv->session as $clientfd => $clientInfo) {
+            $sendFd = binToNum(substr($data, 5, 4));
+        
+            $packLen = binToNum(substr($data, 9, 4));
+        
+            $dataLen = (strlen($data) - 13);
+        
+            if ($dataLen <= $packLen) {
+                $sendData = substr($data, 13);
+                $serv->lastFd[$fd] = $sendFd;
+                $serv->unsendLen[$fd] = ($packLen - $dataLen);
                 
-                if ($selected === $i) {
-                    $serv->send($clientfd, makeSendMessage($fd, $data));
-                    
-                    break;
-                }
-                $i ++;
+                $data='';
+                
+            } else {
+                $sendData = substr($data, 13, $packLen);
+                
+                $data = substr($data, 13 + $packLen);
+                
+                //$serv->leftData[$fd] = substr($data, 13 + $packLen);
+                $serv->lastFd[$fd] = $serv->unsendLen[$fd] = 0;
             }
+        
+        
+            // 指令
+            switch ($method) {
+                case "71":
+                    // 注册
+                    $fdinfo = $serv->connection_info($fd);
+                    $serv->session->set($fd, array(
+                        'ip' => $fdinfo['remote_ip'],
+                        'connectTime' => time(),
+                        'activeTime' => time()
+                    ));
+        
+                    $serv->lastFd[$fd] = 0;
+                    $serv->unsendLen[$fd] = 0;
+                    $serv->leftData[$fd] = '';
+                    break;
+                case "72":
+                    // 发送消息
+                     
+                    if ($serv->exist($sendFd)) {
+                        if ($fd != $sendFd)
+                            $serv->send($sendFd, $sendData);
+                    } else {
+                        // 告知客户端关闭这个连接
+        
+                        $serv->send($fd, makeCloseMessage($sendFd));
+                    }
+        
+                    break;
+        
+                case "73":
+                    // connect
+        
+                    // 服务端不处理此消息
+        
+                    break;
+        
+                case "74":
+                    // close
+        
+                    if ($serv->exist($sendFd) && $fd != $sendFd) {
+        
+                        $serv->close($sendFd);
+                    }
+        
+                    break;
+        
+                case "76":
+                    // ping
+                    $serv->send($fd, makePongMessage());
+                    break;
+        
+                case "77":
+                    // pong
+                    $serv->session->set($fd, array(
+                    'activeTime' => time()
+                    ));
+        
+                    break;
+            }
+        } else {
+            
+            if ($isCommand){
+                $serv->leftData[$fd] = $data;
+            }else{
+                
+                // 普通请求，转发
+                
+                // get client fd
+                $counter = count($serv->session);
+                
+                if ($counter > 0) {
+                
+                    $selected = mt_rand(0, $counter - 1);
+                
+                    $i = 0;
+                
+                    foreach ($serv->session as $clientfd => $clientInfo) {
+                
+                        if ($selected === $i) {
+                            $serv->send($clientfd, makeSendMessage($fd, $data));
+                
+                            break;
+                        }
+                        $i ++;
+                    }
+                }
+                
+            }
+            
+            break;
         }
+        
     }
+    
+    
 });
 
 $serv->on('close', function ($serv, $fd) {
