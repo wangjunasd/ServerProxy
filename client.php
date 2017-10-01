@@ -28,6 +28,8 @@ class Client
     private $leftData = 0;
     
     private $timer=false;
+    
+    private $retryTimer=false;
 
     public function init()
     {
@@ -305,6 +307,11 @@ class Client
     public function onConnect($cli)
     {
         echo "connect server success.\r\n";
+        
+        if ($this->retryTimer){
+            swoole_timer_clear($this->retryTimer);
+        }       
+        
         // send auth message
         $cli->send(makeAuthMessage());
         
@@ -326,8 +333,16 @@ class Client
     public function onClose($cli)
     {
         echo "server close.\r\n";
-        $this->init();
-        $this->connect();
+        if ($this->retryTimer){
+            swoole_timer_clear($this->retryTimer);
+        }
+        
+        $this->retryTimer=swoole_timer_tick(3000, function(){
+            $this->init();
+            $this->connect();
+        });
+        
+        
     }
 
     public function onError()
